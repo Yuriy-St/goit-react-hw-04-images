@@ -1,4 +1,4 @@
-import { Component } from 'react';
+import { useState, useEffect } from 'react';
 import { Container } from './App.styled';
 import SearchBar from 'components/SearchBar/SearchBar';
 import ImageGallery from 'components/ImageGallery/ImageGallery';
@@ -13,49 +13,67 @@ const STATUS = {
   REJECTED: 'rejected',
 };
 
-const DEFAULT_STATE = {
-  query: '',
-  status: STATUS.IDLE,
-  page: 0,
-  error: '',
-};
-
 const PER_PAGE = 12;
-export default class App extends Component {
-  state = {
-    ...DEFAULT_STATE,
-    photos: [],
-  };
 
-  componentDidUpdate(_, prevState) {
-    const isNewQuery =
-      prevState.page !== this.state.page ||
-      prevState.query !== this.state.query;
+export default function App() {
+  const [apiQuery, setApiQuery] = useState({});
+  const [photos, setPhotos] = useState([]);
+  const [status, setStatus] = useState(() => STATUS.IDLE);
+  const [error, setError] = useState('');
 
-    if (isNewQuery) this.fetchPhotos();
-  }
+  useEffect(() => {
+    const fetchPhotos = async () => {
+      const { query, page } = apiQuery;
+      if (!query) {
+        setStatus(STATUS.REJECTED);
+        setError('Please enter a query!');
+        return;
+      }
 
-  handleSubmit = query => {
-    let status = STATUS.IDLE;
-    let error = '';
+      setStatus(STATUS.PENDING);
 
+      try {
+        const {
+          data: { total, hits },
+        } = await pixabay({
+          q: query,
+          page,
+          per_page: PER_PAGE,
+        });
+
+        if (total === 0) {
+          setPhotos([]);
+          setStatus(STATUS.REJECTED);
+          setError('Nothing was found');
+          return;
+        }
+
+        const isLastPage = Math.ceil(total / PER_PAGE) <= page;
+        const status = isLastPage ? STATUS.IDLE : STATUS.RESOLVED;
+        setStatus(status);
+        setPhotos(state => [...state, ...hits]);
+      } catch (error) {
+        setStatus(STATUS.REJECTED);
+        setError(error.message);
+      }
+    };
+
+    fetchPhotos();
+  }, [apiQuery]);
+
+  const handleSubmit = query => {
     if (query.trim() === '') {
-      status = STATUS.REJECTED;
-      error = 'Please enter a query!';
+      setStatus(STATUS.REJECTED);
+      setError('Please enter a query!');
+    } else {
+      setPhotos([]);
+      setApiQuery({ query, page: 1 });
+      setStatus(STATUS.IDLE);
+      setError('');
     }
-
-    this.setState(() => ({
-      ...DEFAULT_STATE,
-      photos: [],
-      query,
-      status,
-      error,
-    }));
-
-    this.pageIncrease();
   };
 
-  getNormalizedPhotos = photos => {
+  const getNormalizedPhotos = photos => {
     const normPhotos = photos.map(
       ({ id, tags, webformatURL, largeImageURL }) => ({
         id,
@@ -68,74 +86,23 @@ export default class App extends Component {
     return normPhotos;
   };
 
-  async fetchPhotos() {
-    const { query, page } = this.state;
-    if (!query) {
-      this.setState({
-        status: STATUS.REJECTED,
-        error: 'Please enter a query!',
-      });
-      return;
-    }
-
-    this.setState({
-      status: STATUS.PENDING,
-    });
-
-    try {
-      const {
-        data: { total, hits },
-      } = await pixabay({
-        q: query,
-        page,
-        per_page: PER_PAGE,
-      });
-
-      if (total === 0) {
-        this.setState({
-          photos: [],
-          status: STATUS.REJECTED,
-          error: 'Nothing was found',
-        });
-        return;
-      }
-
-      const isLastPage = Math.ceil(total / PER_PAGE) <= page;
-      const status = isLastPage ? STATUS.IDLE : STATUS.RESOLVED;
-      this.setState(prevState => ({
-        photos: [...prevState.photos, ...hits],
-        status,
-      }));
-    } catch (error) {
-      this.setState({
-        status: STATUS.REJECTED,
-        error: error.message,
-      });
-    }
-  }
-
-  pageIncrease = () => {
-    this.setState(prevState => ({ page: prevState.page + 1 }));
+  const pageIncrease = () => {
+    setApiQuery(state => ({ ...state, page: state.page + 1 }));
   };
 
-  render() {
-    const { status, photos, error } = this.state;
-    const hasPhotos = photos.length !== 0;
+  const hasPhotos = photos.length !== 0;
 
-    return (
-      <Container>
-        <SearchBar onSubmit={this.handleSubmit} />
+  return (
+    <Container>
+      <SearchBar onSubmit={handleSubmit} />
 
-        {hasPhotos && (
-          <ImageGallery photos={this.getNormalizedPhotos(photos)} />
-        )}
+      {hasPhotos && <ImageGallery photos={getNormalizedPhotos(photos)} />}
 
-        {status === STATUS.PENDING && <LoadMore isLoading />}
+      {status === STATUS.PENDING && <LoadMore isLoading />}
 
-        {status === STATUS.RESOLVED && <LoadMore onClick={this.pageIncrease} />}
+      {status === STATUS.RESOLVED && <LoadMore onClick={pageIncrease} />}
 
-        {status === STATUS.REJECTED && <ErrorMessage>{error}</ErrorMessage>}
-      </Container>
-    );
-  }
+      {status === STATUS.REJECTED && <ErrorMessage>{error}</ErrorMessage>}
+    </Container>
+  );
 }
